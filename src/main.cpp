@@ -16,7 +16,7 @@ typedef struct struct_message {
 struct_message incomingData;
 struct_message outboundReply;
 unsigned long nextWaterMillis = 0;
-const unsigned long WATER_INTERVAL = 30000; // 8 Hours
+const unsigned long WATER_INTERVAL = 3600000; // 1 Hours
 bool forceWaterOnce = false;
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *data, int len) {
