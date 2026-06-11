@@ -14,7 +14,8 @@ typedef struct struct_message {
     int pumpDurationSec;  
     float tankLimitCm;    
     long waterIntervalMs; 
-    int sleepTimeMin;     
+    int sleepTimeMin;     // Note: We keep the struct name 'Min' for compatibility, 
+                          // but we will treat the VALUE as Seconds.
     float moistThreshold; 
 } struct_message;
 
@@ -33,31 +34,29 @@ void setup() {
     
     // --- UPDATED DEFAULTS ---
     config.pumpDurationSec = 12;
-    config.tankLimitCm = 50.0;          // 50cm default
-    config.waterIntervalMs = 3600000;    // 1 Hour default
-    config.sleepTimeMin = 1;             // 1 Min default
-    config.moistThreshold = 20.0;        // 20% default
+    config.tankLimitCm = 50.0;          
+    config.waterIntervalMs = 3600000;   // 1 Hour default
+    config.sleepTimeMin = 10;            // 10 SECONDS default
+    config.moistThreshold = 20.0;       
     
     nextWaterMillis = millis() + config.waterIntervalMs;
 
     esp_now_register_recv_cb(esp_now_recv_cb_t([](const uint8_t *mac, const uint8_t *data, int len) {
         memcpy(&incoming, data, sizeof(incoming));
         
-        // --- EXTENSIVE DATA REPORT ---
         Serial.println("\n==========================================");
         Serial.println("      FIELD RECEIVER CHECK-IN REPORT      ");
         Serial.println("==========================================");
-        Serial.printf(" [TIME]     Current: %lu | Next Water: %lu\n", millis()/1000, nextWaterMillis/1000);
+        Serial.printf(" [TIME]     Current: %lu s | Next Water: %lu s\n", millis()/1000, nextWaterMillis/1000);
         Serial.printf(" [SENSORS]  Moisture: %.1f%%  | Tank Dist: %.1f cm\n", incoming.moisture, incoming.tankDist);
         Serial.printf(" [POWER]    Solar: %.2f V    | Current: %.2f mA\n", incoming.solarVolts, incoming.solarAmps);
-        Serial.printf(" [STATUS]   Receiver State: %s\n", incoming.pumpStatus);
         
-        // Battery Warning Logic
+        // Battery Health Warning
         if (incoming.solarVolts < 3.7) lowBatCounter++;
         else lowBatCounter = 0;
         if (lowBatCounter >= 3) Serial.println(" [!] WARNING: Battery voltage low for 3 cycles!");
 
-        // Decision Logic
+        // Trigger Logic
         bool timerTrigger = (millis() >= nextWaterMillis);
         bool moistureTrigger = (incoming.moisture < config.moistThreshold);
 
@@ -65,14 +64,14 @@ void setup() {
             if (incoming.tankDist < config.tankLimitCm) {
                 config.commandWater = true;
                 nextWaterMillis = millis() + config.waterIntervalMs;
-                Serial.println(" [ACTION]   >>> DISPATCHING PUMP COMMAND");
+                Serial.println(" [ACTION]   >>> COMMAND: WATERING DISPATCHED");
             } else {
                 config.commandWater = false;
                 Serial.println(" [ACTION]   >>> PUMP BLOCKED: Tank safety limit hit.");
             }
         } else {
             config.commandWater = false;
-            Serial.printf(" [ACTION]   >>> STANDBY: %ld min to next cycle\n", (nextWaterMillis - millis())/60000);
+            Serial.printf(" [ACTION]   >>> STANDBY: %ld sec to next cycle\n", (nextWaterMillis - millis())/1000);
         }
 
         esp_now_send(receiverAddr, (uint8_t *) &config, sizeof(config));
@@ -89,16 +88,13 @@ void showSettings() {
     Serial.printf(" 1. Pump Time   : %d sec\n", config.pumpDurationSec);
     Serial.printf(" 2. Tank Limit  : %.1f cm\n", config.tankLimitCm);
     Serial.printf(" 3. Interval    : %.2f hours\n", (float)config.waterIntervalMs / 3600000.0);
-    Serial.printf(" 4. Sleep Time  : %d min\n", config.sleepTimeMin);
+    Serial.printf(" 4. Sleep Time  : %d SECONDS\n", config.sleepTimeMin);
     Serial.printf(" 5. Moist Target: %.1f%%\n", config.moistThreshold);
     Serial.println("-----------------------------");
 }
 
 void loop() {
-    if (inMenu && (millis() - menuStartTime > 30000)) {
-        inMenu = false;
-        Serial.println("\n[Menu Timeout]");
-    }
+    if (inMenu && (millis() - menuStartTime > 30000)) { inMenu = false; Serial.println("\n[Menu Timeout]"); }
 
     if (Serial.available()) {
         char c = Serial.read();
@@ -120,28 +116,28 @@ void loop() {
             while(!Serial.available()) { if(millis()-menuStartTime > 30000) return; }
             float val = Serial.parseFloat();
             
-            if (choice == 3) { // Interval validation
-                if (val * 60 < config.sleepTimeMin) {
-                    Serial.println("\n[!] Error: Interval cannot be smaller than Sleep Time!");
+            if (choice == 3) { // Interval validation (val is in Hours)
+                if ((val * 3600) < config.sleepTimeMin) {
+                    Serial.printf("\n[!] Error: Interval (%.0f s) cannot be smaller than Sleep (%d s)!\n", val*3600, config.sleepTimeMin);
                 } else {
                     config.waterIntervalMs = (long)(val * 3600000);
                     nextWaterMillis = millis() + config.waterIntervalMs;
-                    Serial.println("Done.");
+                    Serial.println("Accepted.");
                 }
             } 
-            else if (choice == 4) { // Sleep validation
-                if (val > (float)config.waterIntervalMs / 60000.0) {
+            else if (choice == 4) { // Sleep validation (val is in Seconds)
+                if (val > (float)config.waterIntervalMs / 1000.0) {
                     Serial.println("\n[!] Error: Sleep Time cannot be longer than Watering Interval!");
                 } else {
                     config.sleepTimeMin = (int)val;
-                    Serial.println("Done.");
+                    Serial.println("Accepted.");
                 }
             }
             else {
                 if (choice == 1) config.pumpDurationSec = (int)val;
                 if (choice == 2) config.tankLimitCm = val;
                 if (choice == 5) config.moistThreshold = val;
-                Serial.println("Done.");
+                Serial.println("Accepted.");
             }
             inMenu = false;
         }
